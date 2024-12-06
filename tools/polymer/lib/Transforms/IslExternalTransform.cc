@@ -53,8 +53,14 @@ static llvm::cl::opt<std::string> ClIslExternalImportSchedules(
 
 namespace polymer {
 
+// This function transforms a MLIR function to IslScop representation
+// and dumps the IslScop to a file
+mlir::LogicalResult dumpIslScop(mlir::func::FuncOp mlir_function);
+
 mlir::func::FuncOp islexternalTransform(mlir::func::FuncOp f,
                                         OpBuilder &rewriter) {
+  dumpIslScop(f);
+
   LLVM_DEBUG(dbgs() << "IslExternal transforming: \n");
   LLVM_DEBUG(f.dump());
 
@@ -114,6 +120,26 @@ mlir::func::FuncOp islexternalTransform(mlir::func::FuncOp f,
   }
 
   return g;
+}
+
+LogicalResult dumpIslScop(mlir::func::FuncOp mlir_function) {
+  LLVM_DEBUG(dbgs() << "Dumping IslScop");
+
+  std::unique_ptr<IslScop> scop = createIslFromFuncOp(mlir_function);
+
+  std::string isl_dump_path = "isl.dump";
+
+  std::error_code EC;
+  llvm::raw_fd_ostream IslScopDump(isl_dump_path, EC);
+  if (EC) {
+    llvm::errs() << "Can't open " << isl_dump_path << "\n";
+    return failure();
+  }
+  scop->dumpAccessesUnion(IslScopDump);
+  IslScopDump << '\n';
+  scop->dumpSchedule(IslScopDump);
+
+  return success();
 }
 
 mlir::func::FuncOp plutoTransform(mlir::func::FuncOp f,

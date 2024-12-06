@@ -72,6 +72,9 @@ IslScop::~IslScop() {
       rel = isl_basic_map_free(rel);
     stmt.domain = isl_basic_set_free(stmt.domain);
   }
+  for (auto it : this->memref_to_extent_map) {
+    isl_set_free(it.second);
+  }
   isl_schedule_free(schedule);
   isl_ctx_free(ctx);
 }
@@ -296,6 +299,99 @@ void IslScop::dumpAccesses(llvm::raw_ostream &os) {
       o(8) << "- " << '"' << IslStr(isl_basic_map_to_str(rel)) << '"' << "\n";
   }
 }
+
+void IslScop::dumpAccessesUnion(llvm::raw_ostream &os) {
+  auto o = [&os](unsigned n) -> llvm::raw_ostream & {
+    return os << std::string(n, ' ');
+  };
+
+  o(0) << "n_arrays: " << memRefIdMap.size() << "\n";
+  o(0) << "array identifiers:\n";
+  for (auto it : memRefIdMap) {
+    o(2) << it.second << " (memref_type: ";
+    it.first.getType().print(o(0));
+    o(0) << " (element_type: ";
+    dyn_cast<MemRefType>(it.first.getType()).getElementType().print(o(0));
+    o(0) << " bitWidth: "
+         << dyn_cast<MemRefType>(it.first.getType()).getElementTypeBitWidth();
+    o(2) << ")\n";
+  }
+  o(0) << "\n";
+
+  // fill byte width map
+  create_memref_to_byte_width_map().succeeded();
+  // fill extent map
+  create_memref_to_extent_map().succeeded();
+  for (auto it : this->memRefIdMap) {
+    o(0) << it.second
+         << ": byteWidth: " << this->memref_to_byte_width_map[it.second];
+    o(0) << ", extent : ";
+    o(0) << IslStr(isl_set_to_str(this->memref_to_extent_map.at(it.second)))
+         << "\n";
+  }
+  create_scope_to_loc_map().succeeded();
+  for (auto &it : this->scop_to_loc_map) {
+    o(0) << it.first << ": "
+         << "store:" << it.second.first << " ";
+    o(0) << "load: ";
+    for (auto it : it.second.second) {
+      o(0) << it << ", ";
+    }
+    o(0) << "\n";
+  }
+
+  isl_union_set *domain = isl_schedule_get_domain(schedule);
+  o(0) << "domain: \"" << IslStr(isl_union_set_to_str(domain)) << "\"\n";
+  domain = isl_union_set_free(domain);
+  o(0) << "accesses:\n";
+  for (unsigned stmtId = 0; stmtId < islStmts.size(); stmtId++) {
+    auto &stmt = islStmts[stmtId];
+    o(2) << "- " << scopStmtNames[stmtId] << ":"
+         << "\n";
+    o(6) << "domain:" << IslStr(isl_basic_set_to_str(stmt.domain)) << "\n";
+    o(6) << "reads:"
+         << "\n";
+
+    // create union map if we have some reads
+    if (stmt.readRelations.size() > 0) {
+      // create isl_union_map from the first isl_basic_map
+      isl_union_map *union_of_basic_maps = isl_union_map_from_basic_map(
+          isl_basic_map_copy(stmt.readRelations[0]));
+      for (long unsigned int i = 1; i < stmt.readRelations.size(); ++i) {
+        // convert isl_basic_map to isl_map
+        isl_map *map =
+            isl_map_from_basic_map(isl_basic_map_copy(stmt.readRelations[i]));
+        // add it to our union_map
+        union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
+      }
+      o(8) << "- " << '"' << IslStr(isl_union_map_to_str(union_of_basic_maps))
+           << '"' << "\n";
+      // free the union map
+      isl_union_map_free(union_of_basic_maps);
+    }
+
+    o(6) << "writes:"
+         << "\n";
+    // create union map if we have some writes
+    if (stmt.writeRelations.size() > 0) {
+      // create isl_union_map from the first isl_basic_map
+      isl_union_map *union_of_basic_maps = isl_union_map_from_basic_map(
+          isl_basic_map_copy(stmt.writeRelations[0]));
+      for (long unsigned int i = 1; i < stmt.writeRelations.size(); ++i) {
+        // convert isl_basic_map to isl_map
+        isl_map *map =
+            isl_map_from_basic_map(isl_basic_map_copy(stmt.writeRelations[i]));
+        // add it to our union_map
+        union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
+      }
+      o(8) << "- " << '"' << IslStr(isl_union_map_to_str(union_of_basic_maps))
+           << '"' << "\n";
+      // free the union map
+      isl_union_map_free(union_of_basic_maps);
+    }
+  }
+}
+
 void IslScop::dumpSchedule(llvm::raw_ostream &os) {
   LLVM_DEBUG(llvm::errs() << "Dumping islexternal\n");
   LLVM_DEBUG(llvm::errs() << "Schedule:\n\n");
@@ -1171,4 +1267,77 @@ func::FuncOp IslScop::applySchedule(isl_schedule *newSchedule,
   isl_schedule_free(newSchedule);
 
   return f;
+}
+
+mlir::LogicalResult IslScop::create_memref_to_extent_map() {
+  for (auto it : memRefIdMap) {
+    auto memref_type = dyn_cast<MemRefType>(it.first.getType());
+    // rank is the number of dimensions in a memref
+    int64_t rank = memref_type.getRank();
+
+    isl_space *space;
+    isl_local_space *ls;
+    isl_constraint *c;
+    isl_basic_set *bset;
+
+    space = isl_space_set_alloc(this->ctx, 0, rank);
+    bset = isl_basic_set_universe(isl_space_copy(space));
+    ls = isl_local_space_from_space(space);
+    for (int64_t i = 0; i < rank; ++i) {
+      // FIXME: lower bound is always 0 in memref?
+      int lower_bound = 0;
+      // subtract by 1 as isl will use`<=`
+      auto upper_bound = memref_type.getDimSize(i) - 1;
+
+      // allocate space to constraint
+      c = isl_constraint_alloc_inequality(isl_local_space_copy(ls));
+      // set constant for lower bound
+      c = isl_constraint_set_constant_si(c, lower_bound);
+      c = isl_constraint_set_coefficient_si(c, isl_dim_set, i, 1);
+      // add constraint
+      bset = isl_basic_set_add_constraint(bset, c);
+
+      // allocate space to constraint
+      c = isl_constraint_alloc_inequality(isl_local_space_copy(ls));
+      // set constant for lower bound
+      c = isl_constraint_set_constant_si(c, upper_bound);
+      c = isl_constraint_set_coefficient_si(c, isl_dim_set, i, -1);
+      // add constraint
+      bset = isl_basic_set_add_constraint(bset, c);
+    }
+    isl_local_space_free(ls);
+    isl_set *set = isl_set_from_basic_set(bset);
+    this->memref_to_extent_map[it.second] = set;
+  }
+  return success();
+}
+
+mlir::LogicalResult IslScop::create_memref_to_byte_width_map() {
+  for (auto it : this->memRefIdMap) {
+    // divide bit width by 8 to get byte width
+    this->memref_to_byte_width_map[it.second] =
+        dyn_cast<MemRefType>(it.first.getType()).getElementTypeBitWidth() / 8;
+  }
+  return success();
+}
+
+mlir::LogicalResult IslScop::create_scope_to_loc_map() {
+  for (auto &it : this->scopStmtMap) {
+    std::vector<unsigned> read_lines;
+    unsigned write_line = 0;
+
+    // get location for all read and write operations
+    it.second.getCallee().walk([&write_line, &read_lines](mlir::Operation *op) {
+      if (isa<mlir::affine::AffineReadOpInterface>(op)) {
+        read_lines.push_back(FileLineColLoc(op->getLoc()->getImpl()).getLine());
+      }
+      if (isa<mlir::affine::AffineWriteOpInterface>(op)) {
+        assert((write_line == 0) && "only one write should be present");
+        write_line = FileLineColLoc(op->getLoc()->getImpl()).getLine();
+      }
+    });
+
+    scop_to_loc_map[it.first] = {write_line, read_lines};
+  }
+  return success();
 }
