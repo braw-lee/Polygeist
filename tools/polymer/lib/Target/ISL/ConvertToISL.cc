@@ -146,8 +146,11 @@ std::unique_ptr<IslScop> IslScopBuilder::build(mlir::func::FuncOp f) {
         mlir::Value memref;
 
         stmt.getAccessMapAndMemRef(op, &vMap, &memref);
-        [[maybe_unused]] auto ret =
-            scop->addAccessRelation(stmtId, isRead, memref, vMap, domain);
+        // get line number of access operation
+        unsigned line_number =
+            FileLineColLoc(op->getLoc()->getImpl()).getLine();
+        [[maybe_unused]] auto ret = scop->addAccessRelation(
+            stmtId, isRead, memref, vMap, domain, line_number);
         assert(succeeded(ret));
       }
     });

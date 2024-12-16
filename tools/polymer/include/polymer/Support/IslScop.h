@@ -79,7 +79,8 @@ public:
   mlir::LogicalResult
   addAccessRelation(int stmtId, bool isRead, mlir::Value memref,
                     mlir::affine::AffineValueMap &vMap,
-                    mlir::affine::FlatAffineValueConstraints &cst);
+                    mlir::affine::FlatAffineValueConstraints &cst,
+                    unsigned line_number);
 
   /// Initialize the symbol table.
   void initializeSymbolTable(mlir::func::FuncOp f,
@@ -175,16 +176,18 @@ private:
   // helper functions for generating isl structs that can be passed to bullseye
   mlir::LogicalResult create_memref_to_extent_map();
   mlir::LogicalResult create_memref_to_byte_width_map();
-  mlir::LogicalResult create_scope_to_loc_map();
   mlir::LogicalResult create_union_of_reads_and_writes();
+  mlir::LogicalResult create_read_write_map();
+  mlir::LogicalResult create_domain_map();
 
 public:
   // dump functions
   void dump_extent_map(llvm::raw_ostream &);
   void dump_byte_width_map(llvm::raw_ostream &);
-  void dump_loc_map(llvm::raw_ostream &);
   void dump_union_of_accesses(llvm::raw_ostream &);
   void dump_schedule(llvm::raw_ostream &);
+  void dump_read_write_map(llvm::raw_ostream &);
+  void dump_domain_map(llvm::raw_ostream &os);
   void dump_bullseye_data(llvm::raw_ostream &os);
 
 public:
@@ -193,12 +196,20 @@ public:
   std::unordered_map<std::string, isl_set *> memref_to_extent_map;
   // array -> byte_width
   std::map<std::string, unsigned> memref_to_byte_width_map;
-  // scop_name -> pair{write_location, vec{read_location1, read_location2, ...}}
-  std::map<std::string, std::pair<unsigned, std::vector<unsigned>>> scop_to_loc_map;
   // scop_stmt -> isl_union_map
   std::map<std::string, isl_union_map *> union_of_reads;
   // scop_stmt -> isl_union_map
   std::map<std::string, isl_union_map *> union_of_writes;
+  // scop_stmt -> vec{ pair{line_number, isl_basic_map_str(access)}, pair{},
+  // pair{}, ... }
+  std::map<std::string, std::vector<std::pair<unsigned, std::string>>>
+      scop_to_read_map;
+  // scop_stmt -> vec{ pair{line_number, isl_basic_map_str(access)}, pair{},
+  // pair{}, ... }
+  std::map<std::string, std::vector<std::pair<unsigned, std::string>>>
+      scop_to_write_map;
+  // scop -> isl_basic_set_str
+  std::map<std::string, std::string> scop_to_domain_map;
 };
 
 } // namespace polymer
