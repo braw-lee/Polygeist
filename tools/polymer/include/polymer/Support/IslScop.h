@@ -30,6 +30,7 @@ struct isl_set;
 struct isl_space;
 struct isl_basic_set;
 struct isl_basic_map;
+struct isl_aff;
 
 #define __isl_keep
 #define __isl_give
@@ -176,12 +177,16 @@ private:
   mlir::LogicalResult create_memref_to_extent_map();
   mlir::LogicalResult create_memref_to_byte_width_map();
   mlir::LogicalResult create_scope_to_loc_map();
+  mlir::LogicalResult create_affine_expressions_map();
 
 public:
   // isl_structs that we can pass to bullseye
   std::unordered_map<std::string, isl_set *> memref_to_extent_map;
   std::map<std::string, unsigned> memref_to_byte_width_map;
   std::map<std::string, std::pair<unsigned, std::vector<unsigned>>> scop_to_loc_map;
+  // ScopStmt -> ( Array -> vec{ [isl_aff*], [isl_aff*], ...} )
+  std::map<std::string, std::map<std::string, std::vector<std::string>>>
+      affine_expressions_map;
 };
 
 } // namespace polymer

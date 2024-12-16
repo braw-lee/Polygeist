@@ -35,7 +35,9 @@
 
 #include "isl/aff_type.h"
 #include "isl/ast.h"
+#include "isl/constraint.h"
 #include "isl/id_to_id.h"
+#include "isl/local_space.h"
 #include "isl/printer.h"
 #include "isl/space_type.h"
 #include <isl/aff.h>
@@ -304,6 +306,122 @@ void IslScop::dumpAccessesUnion(llvm::raw_ostream &os) {
   auto o = [&os](unsigned n) -> llvm::raw_ostream & {
     return os << std::string(n, ' ');
   };
+
+  create_affine_expressions_map().succeeded();
+  // print the dump of create affine map
+  for (auto it : affine_expressions_map) {
+    o(0) << "\n" << it.first << " :\n";
+    for (auto jt : it.second) {
+      o(2) << jt.first;
+      for (auto kt : jt.second) {
+        o(4) << "\n[" << kt << "]";
+      }
+      o(0) << "\n";
+    }
+    o(0) << "\n";
+  }
+  o(0) << "\n";
+
+  // get affine expression
+  /*
+  for (auto &statement_name : scopStmtNames) {
+    IslStmt &isl_statement = getIslStmt(statement_name);
+
+    //o(0) << "\nSpace: " << IslStr(isl_space_to_str(space));
+    //o(0) << "\nstatement" << statement_name;
+
+    for (isl_basic_map *it : isl_statement.readRelations) {
+      o(0) << "\nbasic map: " << IslStr(isl_basic_map_to_str(it));
+
+      int length_of_range = isl_basic_map_dim(it, isl_dim_out);
+      int length_of_domain = isl_basic_map_dim(it, isl_dim_in);
+      o(0) << "\ndim in: " << length_of_domain;
+      o(0) << "\ndim out: " << length_of_range;
+
+
+      auto build_aff_expr_using_bset = [&]() {
+        isl_space *space;
+        isl_local_space *ls;
+        isl_basic_set *bset;
+
+        // setup space, basic_set and local_space
+        space = isl_basic_set_get_space(
+            isl_basic_map_domain(isl_basic_map_copy(it)));
+        bset = isl_basic_set_universe(isl_space_copy(space));
+        ls = isl_local_space_from_space(space);
+        // create isl_aff expressions
+        int map_constraint_list_len =
+            isl_constraint_list_size(isl_basic_map_get_constraint_list(it));
+
+        isl_constraint_list *map_constraint_list =
+            isl_basic_map_get_constraint_list(it);
+        for (int index = 0; index < map_constraint_list_len; ++index) {
+          isl_constraint *constraint;
+
+          isl_constraint *map_constraint =
+              isl_constraint_list_get_constraint(map_constraint_list, index);
+
+          // set equality or inequality
+          isl_bool is_equality = isl_constraint_is_equality(map_constraint);
+          switch (is_equality) {
+          case isl_bool_true:
+            constraint =
+                isl_constraint_alloc_equality(isl_local_space_copy(ls));
+            break;
+          case isl_bool_false:
+            constraint =
+                isl_constraint_alloc_inequality(isl_local_space_copy(ls));
+            break;
+          case isl_bool_error:
+            constraint =
+  isl_constraint_alloc_equality(isl_local_space_copy(ls));
+            llvm_unreachable("handle exception?");
+          }
+
+          // set constant
+          isl_val *map_constant =
+              isl_constraint_get_constant_val(map_constraint);
+          constraint =
+              isl_constraint_set_constant_val(constraint, map_constant);
+
+          // set coefficients
+          int domain_len = isl_constraint_dim(map_constraint, isl_dim_in);
+          for (int in_index = 0; in_index<domain_len; ++in_index) {
+            isl_val *in_val = isl_constraint_get_coefficient_val(
+                map_constraint, isl_dim_in, in_index);
+            constraint = isl_constraint_set_coefficient_val(
+                constraint, isl_dim_set, in_index, in_val);
+          }
+          // add the created constraint
+          bset = isl_basic_set_add_constraint(bset, constraint);
+        }
+
+        // print isl_aff expressions
+        o(0) << "\ncopied bset : " << isl_basic_set_to_str(bset);
+
+        int constraint_list_len =
+            isl_constraint_list_size(isl_basic_set_get_constraint_list(bset));
+
+        isl_constraint_list *list = isl_basic_set_get_constraint_list(bset);
+        for (int i = 0; i < constraint_list_len; ++i) {
+          isl_constraint *curr_constraint =
+              isl_constraint_list_get_constraint(list, i);
+          o(0) << "\nCURR aff : "
+               << isl_aff_to_str(isl_constraint_get_aff(curr_constraint));
+        }
+
+      };
+      // call the defined lambda
+      build_aff_expr_using_bset();
+
+      o(0) << "\n";
+    }
+    o(0) << "\n";
+
+    // cardinality() available only in bullseye
+    // long fcount = cardinality(domain);
+  }
+  */
 
   o(0) << "n_arrays: " << memRefIdMap.size() << "\n";
   o(0) << "array identifiers:\n";
@@ -1338,6 +1456,95 @@ mlir::LogicalResult IslScop::create_scope_to_loc_map() {
     });
 
     scop_to_loc_map[it.first] = {write_line, read_lines};
+  }
+  return success();
+}
+
+mlir::LogicalResult IslScop::create_affine_expressions_map() {
+  // get affine expression
+  for (auto &statement_name : scopStmtNames) {
+    IslStmt &isl_statement = getIslStmt(statement_name);
+
+    std::map<std::string, std::vector<std::string>> array_to_aff_expr_map;
+    auto extract_affine_expressions_from_map =
+        [&](std::vector<isl_basic_map *> &access_relations, bool is_read) {
+          for (isl_basic_map *it : access_relations) {
+            std::string array_name =
+                isl_basic_map_get_tuple_name(it, isl_dim_out);
+
+            isl_space *space;
+            isl_local_space *ls;
+            isl_basic_set *bset;
+
+            // setup space, basic_set and local_space
+            space = isl_basic_set_get_space(
+                isl_basic_map_domain(isl_basic_map_copy(it)));
+            bset = isl_basic_set_universe(isl_space_copy(space));
+            ls = isl_local_space_from_space(space);
+            // create isl_aff expressions
+            int map_constraint_list_len =
+                isl_constraint_list_size(isl_basic_map_get_constraint_list(it));
+
+            isl_constraint_list *map_constraint_list =
+                isl_basic_map_get_constraint_list(it);
+            for (int index = 0; index < map_constraint_list_len; ++index) {
+              isl_constraint *constraint;
+
+              isl_constraint *map_constraint =
+                  isl_constraint_list_get_constraint(map_constraint_list,
+                                                     index);
+
+              // set equality or inequality
+              isl_bool is_equality = isl_constraint_is_equality(map_constraint);
+              switch (is_equality) {
+              case isl_bool_true:
+                constraint =
+                    isl_constraint_alloc_equality(isl_local_space_copy(ls));
+                break;
+              case isl_bool_false:
+                constraint =
+                    isl_constraint_alloc_inequality(isl_local_space_copy(ls));
+                break;
+              case isl_bool_error:
+                constraint =
+                    isl_constraint_alloc_equality(isl_local_space_copy(ls));
+                llvm_unreachable("handle exception?");
+              }
+
+              // set constant
+              isl_val *map_constant =
+                  isl_constraint_get_constant_val(map_constraint);
+              constraint =
+                  isl_constraint_set_constant_val(constraint, map_constant);
+
+              // set coefficients
+              int domain_len = isl_constraint_dim(map_constraint, isl_dim_in);
+              for (int in_index = 0; in_index < domain_len; ++in_index) {
+                isl_val *in_val = isl_constraint_get_coefficient_val(
+                    map_constraint, isl_dim_in, in_index);
+                constraint = isl_constraint_set_coefficient_val(
+                    constraint, isl_dim_set, in_index, in_val);
+              }
+              // add the created constraint
+              bset = isl_basic_set_add_constraint(bset, constraint);
+            }
+
+            isl_constraint_list *constraint_list =
+                isl_basic_set_get_constraint_list(bset);
+            int bset_constraint_list_len =
+                isl_constraint_list_size(constraint_list);
+            for (int index = 0; index < bset_constraint_list_len; ++index) {
+              isl_constraint *curr_constraint =
+                  isl_constraint_list_get_constraint(constraint_list, index);
+              isl_aff *affine_expression =
+                  isl_constraint_get_aff(curr_constraint);
+              array_to_aff_expr_map[array_name].push_back(
+                  std::string{isl_aff_to_str(affine_expression)});
+            }
+          }
+        };
+    extract_affine_expressions_from_map(isl_statement.readRelations, true);
+    this->affine_expressions_map[statement_name] = array_to_aff_expr_map;
   }
   return success();
 }
