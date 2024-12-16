@@ -192,14 +192,14 @@ public:
 
 public:
   // isl_structs that we can pass to bullseye
-  // array -> isl_set(extent)
-  std::unordered_map<std::string, isl_set *> memref_to_extent_map;
+  // array -> isl_set_str(extent)
+  std::unordered_map<std::string, std::string> memref_to_extent_map;
   // array -> byte_width
   std::map<std::string, unsigned> memref_to_byte_width_map;
-  // scop_stmt -> isl_union_map
-  std::map<std::string, isl_union_map *> union_of_reads;
-  // scop_stmt -> isl_union_map
-  std::map<std::string, isl_union_map *> union_of_writes;
+  // scop_stmt -> isl_union_map_str
+  std::map<std::string, std::string> union_of_reads;
+  // scop_stmt -> isl_union_map_str
+  std::map<std::string, std::string> union_of_writes;
   // scop_stmt -> vec{ pair{line_number, isl_basic_map_str(access)}, pair{},
   // pair{}, ... }
   std::map<std::string, std::vector<std::pair<unsigned, std::string>>>

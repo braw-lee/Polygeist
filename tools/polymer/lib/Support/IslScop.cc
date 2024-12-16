@@ -74,9 +74,6 @@ IslScop::~IslScop() {
       rel = isl_basic_map_free(rel);
     stmt.domain = isl_basic_set_free(stmt.domain);
   }
-  for (auto it : this->memref_to_extent_map) {
-    isl_set_free(it.second);
-  }
   isl_schedule_free(schedule);
   isl_ctx_free(ctx);
 }
@@ -1226,7 +1223,7 @@ mlir::LogicalResult IslScop::create_memref_to_extent_map() {
     }
     isl_local_space_free(ls);
     isl_set *set = isl_set_from_basic_set(bset);
-    this->memref_to_extent_map[it.second] = set;
+    this->memref_to_extent_map[it.second] = std::string{isl_set_to_str(set)};
   }
   return success();
 }
@@ -1256,7 +1253,8 @@ mlir::LogicalResult IslScop::create_union_of_reads_and_writes() {
         // add it to our union_map
         union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
       }
-      union_of_reads[scop_stmt_name] = union_of_basic_maps;
+      union_of_reads[scop_stmt_name] =
+          std::string{isl_union_map_to_str(union_of_basic_maps)};
     }
 
     // create union map if we have some writes
@@ -1271,7 +1269,8 @@ mlir::LogicalResult IslScop::create_union_of_reads_and_writes() {
         // add it to our union_map
         union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
       }
-      union_of_writes[scop_stmt_name] = union_of_basic_maps;
+      union_of_writes[scop_stmt_name] =
+          std::string{isl_union_map_to_str(union_of_basic_maps)};
     }
   }
   return success();
@@ -1295,7 +1294,7 @@ void IslScop::dump_extent_map(llvm::raw_ostream &o) {
     << "Extent dump :";
   for (auto it : memref_to_extent_map) {
     o << "\n" << it.first << " -> extent : ";
-    o << IslStr(isl_set_to_str(it.second));
+    o << it.second;
   }
 }
 
@@ -1314,13 +1313,13 @@ void IslScop::dump_union_of_accesses(llvm::raw_ostream &o) {
   o << "\nReads:";
   for (auto it : union_of_reads) {
     o << "\n" << it.first;
-    o << "\n" << isl_union_map_to_str(it.second);
+    o << "\n" << it.second;
   }
   // dump writes for all scop_stmt
   o << "\nWrites:";
   for (auto it : union_of_writes) {
     o << "\n" << it.first;
-    o << "\n" << isl_union_map_to_str(it.second);
+    o << "\n" << it.second;
   }
 }
 
