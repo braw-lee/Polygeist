@@ -59,7 +59,7 @@ mlir::LogicalResult dumpIslScop(mlir::func::FuncOp mlir_function);
 
 mlir::func::FuncOp islexternalTransform(mlir::func::FuncOp f,
                                         OpBuilder &rewriter) {
-  dumpIslScop(f);
+  dumpIslScop(f).succeeded();
 
   LLVM_DEBUG(dbgs() << "IslExternal transforming: \n");
   LLVM_DEBUG(f.dump());
@@ -135,9 +135,7 @@ LogicalResult dumpIslScop(mlir::func::FuncOp mlir_function) {
     llvm::errs() << "Can't open " << isl_dump_path << "\n";
     return failure();
   }
-  scop->dumpAccessesUnion(IslScopDump);
-  IslScopDump << '\n';
-  scop->dumpSchedule(IslScopDump);
+  scop->dump_bullseye_data(IslScopDump);
 
   return success();
 }

@@ -38,6 +38,7 @@
 #include "isl/id_to_id.h"
 #include "isl/printer.h"
 #include "isl/space_type.h"
+#include <iostream>
 #include <isl/aff.h>
 #include <isl/ast_build.h>
 #include <isl/ctx.h>
@@ -297,98 +298,6 @@ void IslScop::dumpAccesses(llvm::raw_ostream &os) {
          << "\n";
     for (auto rel : stmt.writeRelations)
       o(8) << "- " << '"' << IslStr(isl_basic_map_to_str(rel)) << '"' << "\n";
-  }
-}
-
-void IslScop::dumpAccessesUnion(llvm::raw_ostream &os) {
-  auto o = [&os](unsigned n) -> llvm::raw_ostream & {
-    return os << std::string(n, ' ');
-  };
-
-  o(0) << "n_arrays: " << memRefIdMap.size() << "\n";
-  o(0) << "array identifiers:\n";
-  for (auto it : memRefIdMap) {
-    o(2) << it.second << " (memref_type: ";
-    it.first.getType().print(o(0));
-    o(0) << " (element_type: ";
-    dyn_cast<MemRefType>(it.first.getType()).getElementType().print(o(0));
-    o(0) << " bitWidth: "
-         << dyn_cast<MemRefType>(it.first.getType()).getElementTypeBitWidth();
-    o(2) << ")\n";
-  }
-  o(0) << "\n";
-
-  // fill byte width map
-  create_memref_to_byte_width_map().succeeded();
-  // fill extent map
-  create_memref_to_extent_map().succeeded();
-  for (auto it : this->memRefIdMap) {
-    o(0) << it.second
-         << ": byteWidth: " << this->memref_to_byte_width_map[it.second];
-    o(0) << ", extent : ";
-    o(0) << IslStr(isl_set_to_str(this->memref_to_extent_map.at(it.second)))
-         << "\n";
-  }
-  create_scope_to_loc_map().succeeded();
-  for (auto &it : this->scop_to_loc_map) {
-    o(0) << it.first << ": "
-         << "store:" << it.second.first << " ";
-    o(0) << "load: ";
-    for (auto it : it.second.second) {
-      o(0) << it << ", ";
-    }
-    o(0) << "\n";
-  }
-
-  isl_union_set *domain = isl_schedule_get_domain(schedule);
-  o(0) << "domain: \"" << IslStr(isl_union_set_to_str(domain)) << "\"\n";
-  domain = isl_union_set_free(domain);
-  o(0) << "accesses:\n";
-  for (unsigned stmtId = 0; stmtId < islStmts.size(); stmtId++) {
-    auto &stmt = islStmts[stmtId];
-    o(2) << "- " << scopStmtNames[stmtId] << ":"
-         << "\n";
-    o(6) << "domain:" << IslStr(isl_basic_set_to_str(stmt.domain)) << "\n";
-    o(6) << "reads:"
-         << "\n";
-
-    // create union map if we have some reads
-    if (stmt.readRelations.size() > 0) {
-      // create isl_union_map from the first isl_basic_map
-      isl_union_map *union_of_basic_maps = isl_union_map_from_basic_map(
-          isl_basic_map_copy(stmt.readRelations[0]));
-      for (long unsigned int i = 1; i < stmt.readRelations.size(); ++i) {
-        // convert isl_basic_map to isl_map
-        isl_map *map =
-            isl_map_from_basic_map(isl_basic_map_copy(stmt.readRelations[i]));
-        // add it to our union_map
-        union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
-      }
-      o(8) << "- " << '"' << IslStr(isl_union_map_to_str(union_of_basic_maps))
-           << '"' << "\n";
-      // free the union map
-      isl_union_map_free(union_of_basic_maps);
-    }
-
-    o(6) << "writes:"
-         << "\n";
-    // create union map if we have some writes
-    if (stmt.writeRelations.size() > 0) {
-      // create isl_union_map from the first isl_basic_map
-      isl_union_map *union_of_basic_maps = isl_union_map_from_basic_map(
-          isl_basic_map_copy(stmt.writeRelations[0]));
-      for (long unsigned int i = 1; i < stmt.writeRelations.size(); ++i) {
-        // convert isl_basic_map to isl_map
-        isl_map *map =
-            isl_map_from_basic_map(isl_basic_map_copy(stmt.writeRelations[i]));
-        // add it to our union_map
-        union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
-      }
-      o(8) << "- " << '"' << IslStr(isl_union_map_to_str(union_of_basic_maps))
-           << '"' << "\n";
-      // free the union map
-      isl_union_map_free(union_of_basic_maps);
-    }
   }
 }
 
@@ -1340,4 +1249,104 @@ mlir::LogicalResult IslScop::create_scope_to_loc_map() {
     scop_to_loc_map[it.first] = {write_line, read_lines};
   }
   return success();
+}
+
+mlir::LogicalResult IslScop::create_union_of_reads_and_writes() {
+  for (unsigned stmtId = 0; stmtId < islStmts.size(); stmtId++) {
+    auto &stmt = islStmts[stmtId];
+    std::string scop_stmt_name = scopStmtNames[stmtId];
+    // create union map if we have some reads
+    if (stmt.readRelations.size() > 0) {
+      // create isl_union_map from the first isl_basic_map
+      isl_union_map *union_of_basic_maps = isl_union_map_from_basic_map(
+          isl_basic_map_copy(stmt.readRelations[0]));
+      for (long unsigned int i = 1; i < stmt.readRelations.size(); ++i) {
+        // convert isl_basic_map to isl_map
+        isl_map *map =
+            isl_map_from_basic_map(isl_basic_map_copy(stmt.readRelations[i]));
+        // add it to our union_map
+        union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
+      }
+      union_of_reads[scop_stmt_name] = union_of_basic_maps;
+    }
+
+    // create union map if we have some writes
+    if (stmt.writeRelations.size() > 0) {
+      // create isl_union_map from the first isl_basic_map
+      isl_union_map *union_of_basic_maps = isl_union_map_from_basic_map(
+          isl_basic_map_copy(stmt.writeRelations[0]));
+      for (long unsigned int i = 1; i < stmt.writeRelations.size(); ++i) {
+        // convert isl_basic_map to isl_map
+        isl_map *map =
+            isl_map_from_basic_map(isl_basic_map_copy(stmt.writeRelations[i]));
+        // add it to our union_map
+        union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
+      }
+      union_of_writes[scop_stmt_name] = union_of_basic_maps;
+    }
+  }
+  return success();
+}
+void IslScop::dump_extent_map(llvm::raw_ostream &o) {
+  o << "\n\n"
+    << "Extent dump :";
+  for (auto it : memref_to_extent_map) {
+    o << "\n" << it.first << " -> extent : ";
+    o << IslStr(isl_set_to_str(it.second));
+  }
+}
+void IslScop::dump_byte_width_map(llvm::raw_ostream &o) {
+  o << "\n\n"
+    << "Byte width dump :";
+  for (auto it : memref_to_byte_width_map) {
+    o << "\n" << it.first << " -> byteWidth: " << it.second;
+  }
+}
+void IslScop::dump_loc_map(llvm::raw_ostream &o) {
+  o << "\n\n"
+    << "Location dump :";
+  for (auto &it : this->scop_to_loc_map) {
+    o << "\n"
+      << it.first << " :"
+      << "\nstore: " << it.second.first;
+    o << "\nload: ";
+    for (auto it : it.second.second) {
+      o << it << ", ";
+    }
+  }
+}
+void IslScop::dump_union_of_accesses(llvm::raw_ostream &o) {
+  o << "\n\n"
+    << "Accesses dump :";
+  // dump reads for all scop_stmt
+  o << "\nReads:";
+  for (auto it : union_of_reads) {
+    o << "\n" << it.first;
+    o << "\n" << isl_union_map_to_str(it.second);
+  }
+  // dump writes for all scop_stmt
+  o << "\nWrites:";
+  for (auto it : union_of_writes) {
+    o << "\n" << it.first;
+    o << "\n" << isl_union_map_to_str(it.second);
+  }
+}
+
+void IslScop::dump_schedule(llvm::raw_ostream &o) {
+  o << "\n\n"
+    << "Schedule dump :";
+  o << "\n" << isl_schedule_to_str(this->schedule);
+}
+
+void IslScop::dump_bullseye_data(llvm::raw_ostream &os) {
+  create_memref_to_extent_map().succeeded();
+  create_memref_to_byte_width_map().succeeded();
+  create_scope_to_loc_map().succeeded();
+  create_union_of_reads_and_writes().succeeded();
+
+  dump_extent_map(os);
+  dump_byte_width_map(os);
+  dump_loc_map(os);
+  dump_union_of_accesses(os);
+  dump_schedule(os);
 }
