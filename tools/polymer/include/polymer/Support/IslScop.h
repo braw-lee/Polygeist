@@ -206,17 +206,16 @@ public:
   std::unordered_map<std::string, std::string> memref_to_extent_map;
   // array -> byte_width
   std::map<std::string, unsigned> memref_to_byte_width_map;
-  // scop_stmt -> isl_union_map_str
-  std::map<std::string, std::string> union_of_reads;
-  // scop_stmt -> isl_union_map_str
-  std::map<std::string, std::string> union_of_writes;
+  // isl_union_map_str
+  std::string union_of_reads;
+  // isl_union_map_str
+  std::string union_of_writes;
   // scop_stmt -> vec{ isl_basic_map_str(access), ...,}
   std::map<std::string, std::vector<std::string>> scop_to_read_map;
+  // scop_stmt -> vec{ isl_basic_map_str(access), ... }
+  std::map<std::string, std::vector<std::string>> scop_to_write_map;
   // access_expr_unique_id -> line_number
   std::map<std::string, unsigned> access_to_line_number_map;
-  // scop_stmt -> vec{ pair{line_number, isl_basic_map_str(access)}, pair{},
-  // pair{}, ... }
-  std::map<std::string, std::vector<std::string>> scop_to_write_map;
   // scop -> isl_basic_set_str
   std::map<std::string, std::string> scop_to_domain_map;
   // unique number assigned to access expressions

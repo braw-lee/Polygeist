@@ -1327,41 +1327,42 @@ mlir::LogicalResult IslScop::create_memref_to_byte_width_map() {
 }
 
 mlir::LogicalResult IslScop::create_union_of_reads_and_writes() {
+  isl_union_map *reads_union = nullptr;
+  isl_union_map *writes_union = nullptr;
   for (unsigned stmtId = 0; stmtId < islStmts.size(); stmtId++) {
     auto &stmt = islStmts[stmtId];
-    std::string scop_stmt_name = scopStmtNames[stmtId];
-    // create union map if we have some reads
-    if (stmt.readRelations.size() > 0) {
-      // create isl_union_map from the first isl_basic_map
-      isl_union_map *union_of_basic_maps = isl_union_map_from_basic_map(
-          isl_basic_map_copy(stmt.readRelations[0]));
-      for (long unsigned int i = 1; i < stmt.readRelations.size(); ++i) {
+    for (unsigned i = 0; i < stmt.readRelations.size(); ++i) {
+      if (reads_union == nullptr) {
+        reads_union = isl_union_map_from_basic_map(
+            isl_basic_map_copy(stmt.readRelations[i]));
+      } else {
         // convert isl_basic_map to isl_map
-        isl_map *map =
+        isl_map *read_map =
             isl_map_from_basic_map(isl_basic_map_copy(stmt.readRelations[i]));
         // add it to our union_map
-        union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
+        reads_union = isl_union_map_add_map(reads_union, read_map);
       }
-      union_of_reads[scop_stmt_name] =
-          std::string{isl_union_map_to_str(union_of_basic_maps)};
     }
-
-    // create union map if we have some writes
-    if (stmt.writeRelations.size() > 0) {
-      // create isl_union_map from the first isl_basic_map
-      isl_union_map *union_of_basic_maps = isl_union_map_from_basic_map(
-          isl_basic_map_copy(stmt.writeRelations[0]));
-      for (long unsigned int i = 1; i < stmt.writeRelations.size(); ++i) {
+    for (unsigned i = 0; i < stmt.writeRelations.size(); ++i) {
+      if (writes_union == nullptr) {
+        writes_union = isl_union_map_from_basic_map(
+            isl_basic_map_copy(stmt.writeRelations[i]));
+      } else {
         // convert isl_basic_map to isl_map
-        isl_map *map =
+        isl_map *write_map =
             isl_map_from_basic_map(isl_basic_map_copy(stmt.writeRelations[i]));
         // add it to our union_map
-        union_of_basic_maps = isl_union_map_add_map(union_of_basic_maps, map);
+        writes_union = isl_union_map_add_map(writes_union, write_map);
       }
-      union_of_writes[scop_stmt_name] =
-          std::string{isl_union_map_to_str(union_of_basic_maps)};
     }
   }
+  // store union_maps as strings
+  union_of_reads = std::string{isl_union_map_to_str(reads_union)};
+  union_of_writes = std::string{isl_union_map_to_str(writes_union)};
+  // free the union_maps
+  isl_union_map_free(reads_union);
+  isl_union_map_free(writes_union);
+
   return success();
 }
 
@@ -1411,18 +1412,8 @@ void IslScop::dump_byte_width_map(llvm::raw_ostream &o) {
 void IslScop::dump_union_of_accesses(llvm::raw_ostream &o) {
   o << "\n\n"
     << "Union of accesses dump :";
-  // dump reads for all scop_stmt
-  o << "\nReads:";
-  for (auto it : union_of_reads) {
-    o << "\n" << it.first;
-    o << "\n" << it.second;
-  }
-  // dump writes for all scop_stmt
-  o << "\nWrites:";
-  for (auto it : union_of_writes) {
-    o << "\n" << it.first;
-    o << "\n" << it.second;
-  }
+  o << "\nReads: " << union_of_reads;
+  o << "\nWrites: " << union_of_writes;
 }
 
 void IslScop::dump_read_write_map(llvm::raw_ostream &o) {
