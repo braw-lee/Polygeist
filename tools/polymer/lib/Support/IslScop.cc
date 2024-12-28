@@ -35,6 +35,7 @@
 
 #include "isl/aff_type.h"
 #include "isl/ast.h"
+#include "isl/constraint.h"
 #include "isl/id_to_id.h"
 #include "isl/map_type.h"
 #include "isl/printer.h"
@@ -386,17 +387,23 @@ LogicalResult IslScop::addAccessRelation(
       isl_dim_param, isl_dim_cst);
 
   std::string scop_stmt_name = scopStmtNames[stmtId];
+  bmap = transform_access_expr(scop_stmt_name, isRead, bmap);
+
+  // store the line number for each access expression
+  std::string unique_id = isl_basic_set_get_tuple_name(
+      isl_basic_map_domain(isl_basic_map_copy(bmap)));
+  access_to_line_number_map[unique_id] = line_number;
 
   if (isRead) {
     islStmts[stmtId].readRelations.push_back(bmap);
     // add some isl data for bullseye
     scop_to_read_map[scop_stmt_name].push_back(
-        std::pair{line_number, std::string{isl_basic_map_to_str(bmap)}});
+        std::string{isl_basic_map_to_str(bmap)});
   } else {
-    // add some isl data for bullseye
     islStmts[stmtId].writeRelations.push_back(bmap);
+    // add some isl data for bullseye
     scop_to_write_map[scop_stmt_name].push_back(
-        std::pair{line_number, std::string{isl_basic_map_to_str(bmap)}});
+        std::string{isl_basic_map_to_str(bmap)});
   }
 
   ISL_DEBUG("Created relation: ", isl_basic_map_dump(bmap));
@@ -1185,6 +1192,88 @@ func::FuncOp IslScop::applySchedule(isl_schedule *newSchedule,
   return f;
 }
 
+isl_basic_map *IslScop::add_constraints(isl_constraint_list *constraint_list,
+                                        unsigned list_len,
+                                        isl_basic_map *access_relation) {
+  /*
+   * This function will help us add the constraints when the space of constraint
+   * and access_relation differ by tuple_id only
+   */
+  for (unsigned c_i = 0; c_i < list_len; ++c_i) {
+    isl_constraint *curr_constraint =
+        isl_constraint_list_get_constraint(constraint_list, c_i);
+
+    isl_local_space *ls =
+        isl_local_space_from_space(isl_basic_map_get_space(access_relation));
+
+    isl_constraint *new_constraint;
+    isl_bool is_eq = isl_constraint_is_equality(curr_constraint);
+    if (is_eq == 1 /*true*/) {
+      new_constraint = isl_constraint_alloc_equality(ls);
+    } else if (is_eq == 0 /*false*/) {
+      new_constraint = isl_constraint_alloc_inequality(ls);
+    } else {
+      llvm_unreachable("Error while checking constraints equality");
+    }
+    isl_val *constant_val = isl_constraint_get_constant_val(curr_constraint);
+    new_constraint =
+        isl_constraint_set_constant_val(new_constraint, constant_val);
+
+    int input_len = isl_constraint_dim(curr_constraint, isl_dim_in);
+    for (int pos = 0; pos < input_len; ++pos) {
+      isl_val *coeff_val =
+          isl_constraint_get_coefficient_val(curr_constraint, isl_dim_in, pos);
+      new_constraint = isl_constraint_set_coefficient_val(
+          new_constraint, isl_dim_in, pos, coeff_val);
+    }
+    int output_len = isl_constraint_dim(curr_constraint, isl_dim_out);
+    for (int pos = 0; pos < output_len; ++pos) {
+      isl_val *coeff_val =
+          isl_constraint_get_coefficient_val(curr_constraint, isl_dim_out, pos);
+      new_constraint = isl_constraint_set_coefficient_val(
+          new_constraint, isl_dim_out, pos, coeff_val);
+    }
+    access_relation =
+        isl_basic_map_add_constraint(access_relation, new_constraint);
+  }
+  return access_relation;
+}
+
+isl_basic_map *IslScop::transform_access_expr(std::string &stmt_name,
+                                              bool is_read,
+                                              isl_basic_map *access_expr) {
+  /*
+   * [i0, i1] -> [...] : constraints
+   * to ...
+   * S0_read_id_1[i0, i1] -> [...] : constraints
+   *
+   * the aim is to store the scope's name and a unique identifier inside isl
+   * structure
+   */
+  isl_basic_set *input_domain =
+      isl_basic_map_domain(isl_basic_map_copy(access_expr));
+
+  // create a unique isl identifier
+  std::string read_or_write_str = is_read ? "_read_" : "_write_";
+  std::string unique_name =
+      stmt_name + read_or_write_str + std::to_string(unique_counter++);
+  isl_id *unique_id = isl_id_alloc(this->ctx, unique_name.c_str(), nullptr);
+  // set the unique identifier as tuple id for the domain
+  input_domain = isl_basic_set_set_tuple_id(input_domain, unique_id);
+
+  // crate access_relation using the domain with id and the orginal
+  // range
+  isl_basic_map *access_relation = isl_basic_map_from_domain_and_range(
+      input_domain, isl_basic_map_range(isl_basic_map_copy(access_expr)));
+
+  // add constraints
+  isl_constraint_list *constraint_list =
+      isl_basic_map_get_constraint_list(access_expr);
+  int list_len = isl_constraint_list_size(constraint_list);
+  access_relation = add_constraints(constraint_list, list_len, access_relation);
+  return access_relation;
+}
+
 mlir::LogicalResult IslScop::create_memref_to_extent_map() {
   for (auto it : memRefIdMap) {
     auto memref_type = dyn_cast<MemRefType>(it.first.getType());
@@ -1281,11 +1370,24 @@ mlir::LogicalResult IslScop::create_read_write_map() {
   return success();
 }
 
+mlir::LogicalResult IslScop::create_line_number_map() {
+  // this is already done while creating the isl read/write relations
+  return success();
+}
+
 mlir::LogicalResult IslScop::create_domain_map() {
   for (unsigned long i = 0; i < scopStmtNames.size(); ++i) {
     scop_to_domain_map[scopStmtNames[i]] =
         std::string{isl_basic_set_to_str(islStmts[i].domain)};
   }
+  return success();
+}
+mlir::LogicalResult IslScop::create_bullseye_data() {
+  create_memref_to_extent_map().succeeded();
+  create_memref_to_byte_width_map().succeeded();
+  create_union_of_reads_and_writes().succeeded();
+  create_read_write_map().succeeded();
+  create_domain_map().succeeded();
   return success();
 }
 
@@ -1330,15 +1432,22 @@ void IslScop::dump_read_write_map(llvm::raw_ostream &o) {
   for (auto it : scop_to_read_map) {
     o << "\n" << it.first;
     for (auto jt : it.second) {
-      o << "\nLine_number: " << jt.first << ", Read: " << jt.second;
+      o << "\nRead: " << jt;
     }
   }
   o << "\nWrite map:";
   for (auto it : scop_to_write_map) {
     o << "\n" << it.first;
     for (auto jt : it.second) {
-      o << "\nLine_number: " << jt.first << ", Write: " << jt.second;
+      o << "\nWrite: " << jt;
     }
+  }
+}
+
+void IslScop::dump_line_number_map(llvm::raw_ostream &o) {
+  o << "\n\nLine map dump:";
+  for (auto it : access_to_line_number_map) {
+    o << "\n" << it.first << " : " << it.second;
   }
 }
 
@@ -1356,16 +1465,13 @@ void IslScop::dump_domain_map(llvm::raw_ostream &o) {
   }
 }
 void IslScop::dump_bullseye_data(llvm::raw_ostream &os) {
-  create_memref_to_extent_map().succeeded();
-  create_memref_to_byte_width_map().succeeded();
-  create_union_of_reads_and_writes().succeeded();
-  create_read_write_map().succeeded();
-  create_domain_map().succeeded();
+  create_bullseye_data().succeeded();
 
   dump_extent_map(os);
   dump_byte_width_map(os);
   dump_domain_map(os);
   dump_read_write_map(os);
+  dump_line_number_map(os);
   dump_union_of_accesses(os);
   dump_schedule(os);
 }

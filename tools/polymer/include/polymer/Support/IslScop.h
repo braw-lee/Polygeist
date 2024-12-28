@@ -15,6 +15,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringMap.h"
 
+#include "isl/constraint.h"
 #include <cassert>
 #include <cstdint>
 #include <map>
@@ -174,11 +175,19 @@ private:
 
 private:
   // helper functions for generating isl structs that can be passed to bullseye
+  isl_basic_map *add_constraints(isl_constraint_list *constraint_list,
+                                 unsigned list_len,
+                                 isl_basic_map *access_relation);
+
+  isl_basic_map *transform_access_expr(std::string &stmt_name, bool is_read,
+                                       isl_basic_map *access_expr);
   mlir::LogicalResult create_memref_to_extent_map();
   mlir::LogicalResult create_memref_to_byte_width_map();
   mlir::LogicalResult create_union_of_reads_and_writes();
   mlir::LogicalResult create_read_write_map();
+  mlir::LogicalResult create_line_number_map();
   mlir::LogicalResult create_domain_map();
+  mlir::LogicalResult create_bullseye_data();
 
 public:
   // dump functions
@@ -187,6 +196,7 @@ public:
   void dump_union_of_accesses(llvm::raw_ostream &);
   void dump_schedule(llvm::raw_ostream &);
   void dump_read_write_map(llvm::raw_ostream &);
+  void dump_line_number_map(llvm::raw_ostream &);
   void dump_domain_map(llvm::raw_ostream &os);
   void dump_bullseye_data(llvm::raw_ostream &os);
 
@@ -200,16 +210,17 @@ public:
   std::map<std::string, std::string> union_of_reads;
   // scop_stmt -> isl_union_map_str
   std::map<std::string, std::string> union_of_writes;
+  // scop_stmt -> vec{ isl_basic_map_str(access), ...,}
+  std::map<std::string, std::vector<std::string>> scop_to_read_map;
+  // access_expr_unique_id -> line_number
+  std::map<std::string, unsigned> access_to_line_number_map;
   // scop_stmt -> vec{ pair{line_number, isl_basic_map_str(access)}, pair{},
   // pair{}, ... }
-  std::map<std::string, std::vector<std::pair<unsigned, std::string>>>
-      scop_to_read_map;
-  // scop_stmt -> vec{ pair{line_number, isl_basic_map_str(access)}, pair{},
-  // pair{}, ... }
-  std::map<std::string, std::vector<std::pair<unsigned, std::string>>>
-      scop_to_write_map;
+  std::map<std::string, std::vector<std::string>> scop_to_write_map;
   // scop -> isl_basic_set_str
   std::map<std::string, std::string> scop_to_domain_map;
+  // unique number assigned to access expressions
+  unsigned unique_counter = 0;
 };
 
 } // namespace polymer
