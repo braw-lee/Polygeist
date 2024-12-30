@@ -175,12 +175,6 @@ private:
 
 private:
   // helper functions for generating isl structs that can be passed to bullseye
-  isl_basic_map *add_constraints(isl_constraint_list *constraint_list,
-                                 unsigned list_len,
-                                 isl_basic_map *access_relation);
-
-  isl_basic_map *transform_access_expr(std::string &stmt_name, bool is_read,
-                                       isl_basic_map *access_expr);
   mlir::LogicalResult create_memref_to_extent_map();
   mlir::LogicalResult create_memref_to_byte_width_map();
   mlir::LogicalResult create_union_of_reads_and_writes();
