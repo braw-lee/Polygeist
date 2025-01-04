@@ -193,6 +193,7 @@ public:
   void dump_read_write_map(llvm::raw_ostream &);
   void dump_line_number_map(llvm::raw_ostream &);
   void dump_domain_map(llvm::raw_ostream &os);
+  void dump_scop_stmt_names(llvm::raw_ostream &os);
   void dump_bullseye_data(llvm::raw_ostream &os);
 
 public:

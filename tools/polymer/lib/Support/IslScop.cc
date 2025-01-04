@@ -1391,6 +1391,13 @@ void IslScop::dump_domain_map(llvm::raw_ostream &o) {
     o << "\n" << it.first << " -> " << it.second;
   }
 }
+void IslScop::dump_scop_stmt_names(llvm::raw_ostream &o) {
+  o << "\n\nScop stmt names dump :";
+  for (auto it : scopStmtNames) {
+    o << "\n" << it;
+  }
+}
+
 void IslScop::dump_bullseye_data(llvm::raw_ostream &os) {
   create_bullseye_data().succeeded();
 
@@ -1401,4 +1408,5 @@ void IslScop::dump_bullseye_data(llvm::raw_ostream &os) {
   dump_line_number_map(os);
   dump_union_of_accesses(os);
   dump_schedule(os);
+  dump_scop_stmt_names(os);
 }
