@@ -388,7 +388,7 @@ LogicalResult IslScop::addAccessRelation(
 
   std::string scop_stmt_name = scopStmtNames[stmtId];
   std::string unique_id = scop_stmt_name + (isRead ? "_read_" : "_write_") +
-                          std::to_string(this->unique_counter++);
+                          std::to_string(unique_counter++);
   bmap = isl_basic_map_set_tuple_name(bmap, isl_dim_in, unique_id.c_str());
 
   // store the line number for each access expression
@@ -398,12 +398,12 @@ LogicalResult IslScop::addAccessRelation(
     islStmts[stmtId].readRelations.push_back(bmap);
     // add some isl data for bullseye
     scop_to_read_map[scop_stmt_name].push_back(
-        std::string{isl_basic_map_to_str(bmap)});
+        std::string{IslStr(isl_basic_map_to_str(bmap)).str()});
   } else {
     islStmts[stmtId].writeRelations.push_back(bmap);
     // add some isl data for bullseye
     scop_to_write_map[scop_stmt_name].push_back(
-        std::string{isl_basic_map_to_str(bmap)});
+        std::string{IslStr(isl_basic_map_to_str(bmap)).str()});
   }
 
   ISL_DEBUG("Created relation: ", isl_basic_map_dump(bmap));
@@ -1203,7 +1203,7 @@ mlir::LogicalResult IslScop::create_memref_to_extent_map() {
     isl_constraint *c;
     isl_basic_set *bset;
 
-    space = isl_space_set_alloc(this->ctx, 0, rank);
+    space = isl_space_set_alloc(ctx, 0, rank);
     bset = isl_basic_set_universe(isl_space_copy(space));
     ls = isl_local_space_from_space(space);
     for (int64_t i = 0; i < rank; ++i) {
@@ -1228,17 +1228,20 @@ mlir::LogicalResult IslScop::create_memref_to_extent_map() {
       // add constraint
       bset = isl_basic_set_add_constraint(bset, c);
     }
-    isl_local_space_free(ls);
     isl_set *set = isl_set_from_basic_set(bset);
-    this->memref_to_extent_map[it.second] = std::string{isl_set_to_str(set)};
+    set = isl_set_set_tuple_name(set, it.second.c_str());
+    memref_to_extent_map[it.second] =
+        std::string{IslStr(isl_set_to_str(set)).str()};
+    isl_set_free(set);
+    isl_local_space_free(ls);
   }
   return success();
 }
 
 mlir::LogicalResult IslScop::create_memref_to_byte_width_map() {
-  for (auto it : this->memRefIdMap) {
+  for (auto it : memRefIdMap) {
     // divide bit width by 8 to get byte width
-    this->memref_to_byte_width_map[it.second] =
+    memref_to_byte_width_map[it.second] =
         dyn_cast<MemRefType>(it.first.getType()).getElementTypeBitWidth() / 8;
   }
   return success();
@@ -1276,16 +1279,25 @@ mlir::LogicalResult IslScop::create_union_of_reads_and_writes() {
   }
 
   // store union_maps as strings
-  union_of_reads = reads_union != nullptr
-                       ? std::string{isl_union_map_to_str(reads_union)}
-                       : "";
-  union_of_writes = writes_union != nullptr
-                        ? std::string{isl_union_map_to_str(writes_union)}
-                        : "";
+  union_of_reads =
+      reads_union != nullptr
+          ? std::string{IslStr(isl_union_map_to_str(reads_union)).str()}
+          : "";
+  union_of_writes =
+      writes_union != nullptr
+          ? std::string{IslStr(isl_union_map_to_str(writes_union)).str()}
+          : "";
   // free the union_maps
   isl_union_map_free(reads_union);
   isl_union_map_free(writes_union);
 
+  return success();
+}
+
+mlir::LogicalResult IslScop::create_schedule_str() {
+  schedule_str = schedule != nullptr
+                     ? std::string{IslStr(isl_schedule_to_str(schedule)).str()}
+                     : "";
   return success();
 }
 
@@ -1302,7 +1314,7 @@ mlir::LogicalResult IslScop::create_line_number_map() {
 mlir::LogicalResult IslScop::create_domain_map() {
   for (unsigned long i = 0; i < scopStmtNames.size(); ++i) {
     scop_to_domain_map[scopStmtNames[i]] =
-        std::string{isl_basic_set_to_str(islStmts[i].domain)};
+        std::string{IslStr(isl_basic_set_to_str(islStmts[i].domain)).str()};
   }
   return success();
 }
@@ -1310,6 +1322,7 @@ mlir::LogicalResult IslScop::create_bullseye_data() {
   create_memref_to_extent_map().succeeded();
   create_memref_to_byte_width_map().succeeded();
   create_union_of_reads_and_writes().succeeded();
+  create_schedule_str().succeeded();
   create_read_write_map().succeeded();
   create_domain_map().succeeded();
   return success();
@@ -1368,7 +1381,7 @@ void IslScop::dump_line_number_map(llvm::raw_ostream &o) {
 void IslScop::dump_schedule(llvm::raw_ostream &o) {
   o << "\n\n"
     << "Schedule dump :";
-  o << "\n" << isl_schedule_to_str(this->schedule);
+  o << "\n" << schedule_str;
 }
 
 void IslScop::dump_domain_map(llvm::raw_ostream &o) {

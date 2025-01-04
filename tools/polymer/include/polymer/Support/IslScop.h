@@ -178,6 +178,7 @@ private:
   mlir::LogicalResult create_memref_to_extent_map();
   mlir::LogicalResult create_memref_to_byte_width_map();
   mlir::LogicalResult create_union_of_reads_and_writes();
+  mlir::LogicalResult create_schedule_str();
   mlir::LogicalResult create_read_write_map();
   mlir::LogicalResult create_line_number_map();
   mlir::LogicalResult create_domain_map();
@@ -212,6 +213,8 @@ public:
   std::map<std::string, unsigned> access_to_line_number_map;
   // scop -> isl_basic_set_str
   std::map<std::string, std::string> scop_to_domain_map;
+  // isl_schedule_str
+  std::string schedule_str;
   // unique number assigned to access expressions
   unsigned unique_counter = 0;
 };
