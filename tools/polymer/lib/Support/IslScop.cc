@@ -1274,9 +1274,14 @@ mlir::LogicalResult IslScop::create_union_of_reads_and_writes() {
       }
     }
   }
+
   // store union_maps as strings
-  union_of_reads = std::string{isl_union_map_to_str(reads_union)};
-  union_of_writes = std::string{isl_union_map_to_str(writes_union)};
+  union_of_reads = reads_union != nullptr
+                       ? std::string{isl_union_map_to_str(reads_union)}
+                       : "";
+  union_of_writes = writes_union != nullptr
+                        ? std::string{isl_union_map_to_str(writes_union)}
+                        : "";
   // free the union_maps
   isl_union_map_free(reads_union);
   isl_union_map_free(writes_union);
