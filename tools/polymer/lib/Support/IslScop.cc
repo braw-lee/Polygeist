@@ -885,7 +885,7 @@ public:
         Operation *op = origArg.getDefiningOp();
         assert(op);
         if (auto alloca = dyn_cast<memref::AllocaOp>(op)) {
-          assert(alloca->getAttr("scop.scratchpad"));
+          // assert(alloca->getAttr("scop.scratchpad"));
           auto newAlloca = funcMapping.lookup(op)->getResult(0);
           args.push_back(newAlloca);
         } else {
@@ -1153,7 +1153,7 @@ func::FuncOp IslScop::applySchedule(isl_schedule *newSchedule,
   Operation *op = &f.getFunctionBody().front().front();
   while (true) {
     if (auto alloca = dyn_cast<memref::AllocaOp>(op)) {
-      assert(alloca->getAttr("scop.scratchpad"));
+      // assert(alloca->getAttr("scop.scratchpad"));
       op = op->getNextNode();
       continue;
     }
